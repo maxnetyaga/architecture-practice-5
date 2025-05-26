@@ -14,7 +14,7 @@ import (
 func waitForBalancer(t *testing.T, url string, timeout time.Duration) {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		resp, err := http.Get(url + "/health")
+		resp, err := http.Get(url + "/")
 		if err == nil && resp.StatusCode == http.StatusOK {
 			resp.Body.Close()
 			return
@@ -24,7 +24,7 @@ func waitForBalancer(t *testing.T, url string, timeout time.Duration) {
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	t.Fatalf("balancer at %s did not become healthy within %v", url, timeout)
+	t.Fatalf("Balancer at %s did not respond 200 OK within %v", url, timeout)
 }
 
 func TestBalancerDistribution(t *testing.T) {
