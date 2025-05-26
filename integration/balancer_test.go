@@ -4,15 +4,20 @@
 package integration
 
 import (
-	"net/http"
-	"testing"
+    "net/http"
+    "os"
+    "testing"
 )
 
 func TestBalancerDistribution(t *testing.T) {
-	const requests = 10
-	url := "http://balancer:8080"
+    const requests = 10
+    host := os.Getenv("BALANCER_HOST")
+    if host == "" {
+        host = "balancer:8080"
+    }
+    url := "http://" + host
 
-	seen := make(map[string]struct{})
+    seen := make(map[string]struct{})
 
 	for i := 0; i < requests; i++ {
 		resp, err := http.Get(url)
