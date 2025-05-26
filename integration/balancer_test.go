@@ -10,7 +10,7 @@ import (
 
 func TestBalancerDistribution(t *testing.T) {
 	const requests = 10
-	url := "http://lb:8080"
+	url := "http://balancer:8080"
 
 	seen := make(map[string]struct{})
 
