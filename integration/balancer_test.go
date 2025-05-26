@@ -6,6 +6,7 @@ package integration
 import (
 	"net/http"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -25,30 +26,39 @@ func waitForBalancer(t *testing.T, url string, timeout time.Duration) {
 }
 
 func TestBalancerDistribution(t *testing.T) {
-	const requests = 10
-	host := os.Getenv("BALANCER_HOST")
-	if host == "" {
-		host = "balancer:8080"
-	}
-	url := "http://" + host
-
-	waitForBalancer(t, url, 10*time.Second)
+	const requests = 30
+	url := "http://balancer:8090"
 
 	seen := make(map[string]struct{})
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+
+	wg.Add(requests)
 
 	for i := 0; i < requests; i++ {
-		resp, err := http.Get(url)
-		if err != nil {
-			t.Fatalf("Failed to send request #%d: %v", i+1, err)
-		}
-		resp.Body.Close()
+		go func(reqNum int) {
+			defer wg.Done()
+			defer mu.Unlock()
 
-		from := resp.Header.Get("lb-from")
-		if from == "" {
-			t.Fatalf("Response #%d missing 'lb-from' header", i+1)
-		}
-		seen[from] = struct{}{}
+			resp, err := http.Get(url)
+			if err != nil {
+				t.Errorf("Failed to send request #%d: %v", reqNum+1, err)
+				return
+			}
+			defer resp.Body.Close()
+
+			from := resp.Header.Get("lb-from")
+			if from == "" {
+				t.Errorf("Response #%d missing 'lb-from' header", reqNum+1)
+				return
+			}
+
+			mu.Lock()
+			seen[from] = struct{}{}
+		}(i)
 	}
+
+	wg.Wait()
 
 	if len(seen) < 2 {
 		t.Errorf("Expected requests to be distributed to at least 2 servers, but got only %d. Servers seen: %v", len(seen), keys(seen))

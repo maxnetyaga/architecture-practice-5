@@ -4,4 +4,4 @@ WORKDIR /go/src/practice-4
 COPY . .
 
 ENV INTEGRATION_TEST=1
-ENTRYPOINT ["go", "test", "-tags=integration", "./integration"]
+ENTRYPOINT ["go", "test", "-count=1", "-tags=integration", "./integration"]
