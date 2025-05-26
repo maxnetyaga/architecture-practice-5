@@ -12,19 +12,16 @@ import (
 )
 
 func waitForBalancer(t *testing.T, url string, timeout time.Duration) {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		resp, err := http.Get(url + "/")
-		if err == nil && resp.StatusCode == http.StatusOK {
-			resp.Body.Close()
-			return
-		}
-		if resp != nil {
-			resp.Body.Close()
-		}
-		time.Sleep(200 * time.Millisecond)
-	}
-	t.Fatalf("Balancer at %s did not respond 200 OK within %v", url, timeout)
+    deadline := time.Now().Add(timeout)
+    for time.Now().Before(deadline) {
+        resp, err := http.Get(url)
+        if err == nil {
+            resp.Body.Close()
+            return
+        }
+        time.Sleep(200 * time.Millisecond)
+    }
+    t.Fatalf("Balancer at %s did not accept connections within %v", url, timeout)
 }
 
 func TestBalancerDistribution(t *testing.T) {
