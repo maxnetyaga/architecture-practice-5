@@ -18,9 +18,6 @@ jobs:
         with:
           go-version: '1.24'
 
-      - name: Install xmllint
-        run: sudo apt install -y make
-
       - name: Run Unit Tests
         run: make unit-test
 
@@ -34,11 +31,11 @@ jobs:
         run: |
           docker compose -f docker-compose.yaml -f docker-compose.test.yaml up -d
           echo "Waiting for test container to finish..."
-          docker wait test-1 > exit_code.txt
+          docker wait architecture-practice-4-template-test-1 > exit_code.txt
           EXIT_CODE=$(cat exit_code.txt)
           docker compose -f docker-compose.yaml -f docker-compose.test.yaml logs
           docker compose -f docker-compose.yaml -f docker-compose.test.yaml down
           if [ "$EXIT_CODE" -ne 0 ]; then
-            echo "test-1 failed with exit code $EXIT_CODE"
+            echo "test failed with exit code $EXIT_CODE"
             exit $EXIT_CODE
           fi
