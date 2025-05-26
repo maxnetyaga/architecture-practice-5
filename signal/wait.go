@@ -8,7 +8,7 @@ import (
 )
 
 func WaitForTerminationSignal() {
-	intChannel := make(chan os.Signal)
+	intChannel := make(chan os.Signal, 1)
 	signal.Notify(intChannel, syscall.SIGINT, syscall.SIGTERM)
 	<-intChannel
 	log.Println("Shutting down...")
