@@ -18,6 +18,9 @@ jobs:
         with:
           go-version: '1.24'
 
+      - name: Install xmllint
+        run: sudo apt install -y make
+
       - name: Run Unit Tests
         run: make unit-test
 
