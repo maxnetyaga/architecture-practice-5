@@ -1,112 +1,144 @@
+// file: cmd/balancer/balancer_test.go
 package main
 
 import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
-// Helper: Create a mock backend server
-func newMockServer(t *testing.T, status int, body string) *httptest.Server {
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func TestScheme(t *testing.T) {
+	orig := *https
+	defer func() { *https = orig }()
+
+	*https = false
+	assert.Equal(t, "http", scheme(), "scheme() should return 'http' when https=false")
+
+	*https = true
+	assert.Equal(t, "https", scheme(), "scheme() should return 'https' when https=true")
+}
+
+func TestHealth_OK(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/health" {
 			w.WriteHeader(http.StatusOK)
-			return
+		} else {
+			w.WriteHeader(http.StatusNotFound)
 		}
-		w.WriteHeader(status)
-		w.Write([]byte(body))
-	})
-	return httptest.NewServer(handler)
+	}))
+	defer ts.Close()
+
+	host := strings.TrimPrefix(ts.URL, "http://")
+	assert.True(t, health(host), "health() should return true for 200 OK")
 }
 
-// Test: Health check returns true for 200 OK
-func TestHealthCheckHealthy(t *testing.T) {
-	srv := newMockServer(t, http.StatusOK, "OK")
-	defer srv.Close()
-
-	addr := srv.Listener.Addr().String()
-	*https = false
-	timeout = 2 * time.Second
-
-	ok := health(addr)
-	if !ok {
-		t.Errorf("Expected health check to pass for mock server at %s", addr)
-	}
-}
-
-// Test: Health check returns false for unreachable or non-200
-func TestHealthCheckUnhealthy(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func TestHealth_NotOK(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
-	defer srv.Close()
+	defer ts.Close()
 
-	addr := srv.Listener.Addr().String()
-	timeout = 1 * time.Second
-
-	if health(addr) {
-		t.Errorf("Expected health check to fail for mock server with 500")
-	}
+	host := strings.TrimPrefix(ts.URL, "http://")
+	assert.False(t, health(host), "health() should return false for 500 Internal Server Error")
 }
 
-// Test: Forwarding works correctly and response body is proxied
-func TestForwarding(t *testing.T) {
-	const responseText = "Hello from backend"
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(responseText))
+func TestHealth_Error(t *testing.T) {
+	assert.False(t, health("localhost:0"), "health() should return false on connection error")
+}
+
+func TestGetLeastConnectedServer_NoneHealthy(t *testing.T) {
+	orig := serversPool
+	defer func() { serversPool = orig }()
+
+	serversPool = []*BackendServer{
+		{Address: "a", ConnCounter: 0, IsHealthy: false},
+		{Address: "b", ConnCounter: 0, IsHealthy: false},
+	}
+	assert.Nil(t, getLeastConnectedServer(), "should return nil when no healthy servers are available")
+}
+
+func TestGetLeastConnectedServer_SelectLowest(t *testing.T) {
+	orig := serversPool
+	defer func() { serversPool = orig }()
+
+	serversPool = []*BackendServer{
+		{Address: "a", ConnCounter: 5, IsHealthy: true},
+		{Address: "b", ConnCounter: 3, IsHealthy: true},
+		{Address: "c", ConnCounter: 10, IsHealthy: true},
+	}
+	srv := getLeastConnectedServer()
+	assert.NotNil(t, srv)
+	assert.Equal(t, "b", srv.Address, "should select the server with the fewest connections")
+}
+
+func TestGetLeastConnectedServer_SkipUnhealthy(t *testing.T) {
+	orig := serversPool
+	defer func() { serversPool = orig }()
+
+	serversPool = []*BackendServer{
+		{Address: "a", ConnCounter: 1, IsHealthy: false},
+		{Address: "b", ConnCounter: 0, IsHealthy: true},
+	}
+	srv := getLeastConnectedServer()
+	assert.NotNil(t, srv)
+	assert.Equal(t, "b", srv.Address, "should skip unhealthy servers")
+}
+
+func TestForward_SuccessAndTrace(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Test", "ok")
+		w.WriteHeader(http.StatusTeapot)
+		io.WriteString(w, "body123")
 	}))
-	defer srv.Close()
+	defer backend.Close()
 
-	req := httptest.NewRequest("GET", "http://localhost/", nil)
-	w := httptest.NewRecorder()
-
-	addr := srv.Listener.Addr().String()
-	err := forward(addr, w, req)
-	if err != nil {
-		t.Fatalf("Forwarding failed: %s", err)
-	}
-	resp := w.Result()
-	body, _ := io.ReadAll(resp.Body)
-
-	if string(body) != responseText {
-		t.Errorf("Expected body %q, got %q", responseText, string(body))
-	}
-}
-
-// Test: Least connected server selection works
-func TestLeastConnectedServerSelection(t *testing.T) {
-	s1 := &BackendServer{Address: "s1", ConnCounter: 3, IsHealthy: true}
-	s2 := &BackendServer{Address: "s2", ConnCounter: 1, IsHealthy: true}
-	s3 := &BackendServer{Address: "s3", ConnCounter: 2, IsHealthy: true}
-
-	serversPool = []*BackendServer{s1, s2, s3}
-	selected := getLeastConnectedServer()
-
-	if selected != s2 {
-		t.Errorf("Expected s2 to be selected, got %v", selected)
-	}
-}
-
-// Test: Connection counter increments and decrements
-func TestForwardWithCounter(t *testing.T) {
-	mockBackend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("ok"))
-	}))
-	defer mockBackend.Close()
-
-	addr := mockBackend.Listener.Addr().String()
-	server := &BackendServer{Address: addr, IsHealthy: true}
+	host := strings.TrimPrefix(backend.URL, "http://")
+	rr := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/", nil)
-	w := httptest.NewRecorder()
+
+	*traceEnabled = false
+	err := forward(host, rr, req)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusTeapot, rr.Code)
+	assert.Equal(t, "ok", rr.Header().Get("X-Test"))
+	assert.Empty(t, rr.Header().Get("lb-from"))
+	assert.Equal(t, "body123", rr.Body.String())
+
+	*traceEnabled = true
+	rr = httptest.NewRecorder()
+	err = forward(host, rr, req)
+	assert.NoError(t, err)
+	assert.Equal(t, host, rr.Header().Get("lb-from"), "should set lb-from header when traceEnabled is true")
+}
+
+func TestForward_Error(t *testing.T) {
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/", nil)
+
+	err := forward("localhost:0", rr, req)
+	assert.Error(t, err)
+	assert.Equal(t, http.StatusServiceUnavailable, rr.Code)
+}
+
+func TestForwardWithCounter(t *testing.T) {
+	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer mock.Close()
+
+	addr := strings.TrimPrefix(mock.URL, "http://")
+	server := &BackendServer{Address: addr, IsHealthy: true}
 
 	before := atomic.LoadInt32(&server.ConnCounter)
-	forwardWithCounter(server, w, req)
-	after := atomic.LoadInt32(&server.ConnCounter)
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/", nil)
 
-	if before != after {
-		t.Errorf("ConnCounter did not reset correctly, before: %d, after: %d", before, after)
-	}
+	forwardWithCounter(server, rr, req)
+	after := atomic.LoadInt32(&server.ConnCounter)
+	assert.Equal(t, before, after, "ConnCounter should return to its initial value after forwarding")
 }

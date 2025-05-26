@@ -1,32 +1,42 @@
+//go:build integration
+// +build integration
+
 package integration
 
 import (
-	"fmt"
 	"net/http"
-	"os"
 	"testing"
-	"time"
 )
 
-const baseAddress = "http://balancer:8090"
+func TestBalancerDistribution(t *testing.T) {
+	const requests = 10
+	url := "http://lb:8080"
 
-var client = http.Client{
-	Timeout: 3 * time.Second,
-}
+	seen := make(map[string]struct{})
 
-func TestBalancer(t *testing.T) {
-	if _, exists := os.LookupEnv("INTEGRATION_TEST"); !exists {
-		t.Skip("Integration test is not enabled")
+	for i := 0; i < requests; i++ {
+		resp, err := http.Get(url)
+		if err != nil {
+			t.Fatalf("Failed to send request #%d: %v", i+1, err)
+		}
+		resp.Body.Close()
+
+		from := resp.Header.Get("lb-from")
+		if from == "" {
+			t.Fatalf("Response #%d missing 'lb-from' header", i+1)
+		}
+		seen[from] = struct{}{}
 	}
 
-	// TODO: Реалізуйте інтеграційний тест для балансувальникка.
-	resp, err := client.Get(fmt.Sprintf("%s/api/v1/some-data", baseAddress))
-	if err != nil {
-		t.Error(err)
+	if len(seen) < 2 {
+		t.Errorf("Expected requests to be distributed to at least 2 servers, but got only %d. Servers seen: %v", len(seen), keys(seen))
 	}
-	t.Logf("response from [%s]", resp.Header.Get("lb-from"))
 }
 
-func BenchmarkBalancer(b *testing.B) {
-	// TODO: Реалізуйте інтеграційний бенчмарк для балансувальникка.
+func keys(m map[string]struct{}) []string {
+	result := make([]string, 0, len(m))
+	for k := range m {
+		result = append(result, k)
+	}
+	return result
 }
