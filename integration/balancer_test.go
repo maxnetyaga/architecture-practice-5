@@ -5,7 +5,6 @@ package integration
 
 import (
 	"net/http"
-	"os"
 	"sync"
 	"testing"
 	"time"
