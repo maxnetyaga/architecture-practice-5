@@ -5,7 +5,7 @@ services:
 
   balancer:
     build: .
-    command: "lb"
+    command: "balancer"
     networks:
       - servers
     ports:
@@ -13,6 +13,8 @@ services:
 
   server1:
     build: .
+    environment:
+      - CONF_RESPONSE_DELAY_SEC=1
     networks:
       - servers
     ports:
@@ -20,6 +22,8 @@ services:
 
   server2:
     build: .
+    environment:
+      - CONF_RESPONSE_DELAY_SEC=1
     networks:
       - servers
     ports:
@@ -27,6 +31,8 @@ services:
 
   server3:
     build: .
+    environment:
+      - CONF_RESPONSE_DELAY_SEC=1
     networks:
       - servers
     ports:
