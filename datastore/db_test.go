@@ -1,8 +1,10 @@
 package datastore
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -201,4 +203,95 @@ func hasMergeTempFiles(t *testing.T, dir string) bool {
 		t.Fatal(err)
 	}
 	return len(files) > 0
+}
+
+func TestConcurrentReadsAndWrites(t *testing.T) {
+	tmp := t.TempDir()
+	db, err := Open(tmp, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	initialPairs := [][]string{
+		{"key1", "initial_value1"},
+		{"key2", "initial_value2"},
+		{"key3", "initial_value3"},
+	}
+
+	for _, pair := range initialPairs {
+		if err := db.Put(pair[0], pair[1]); err != nil {
+			t.Fatalf("Failed to put initial data: %v", err)
+		}
+	}
+
+	const numReaders = 10
+	const numWriters = 5
+	const numOperationsPerGoroutine = 100
+
+	var wg sync.WaitGroup
+	errors := make(chan error, numReaders+numWriters)
+
+	for i := 0; i < numReaders; i++ {
+		wg.Add(1)
+		go func(readerID int) {
+			defer wg.Done()
+			for j := 0; j < numOperationsPerGoroutine; j++ {
+				key := fmt.Sprintf("key%d", (j%3)+1)
+				value, err := db.Get(key)
+				if err != nil {
+					errors <- fmt.Errorf("reader %d: failed to get %s: %v", readerID, key, err)
+					return
+				}
+
+				if value != fmt.Sprintf("initial_value%d", (j%3)+1) &&
+					value != fmt.Sprintf("updated_value%d", (j%3)+1) {
+					errors <- fmt.Errorf("reader %d: unexpected value for %s: %s", readerID, key, value)
+					return
+				}
+			}
+		}(i)
+	}
+
+	for i := 0; i < numWriters; i++ {
+		wg.Add(1)
+		go func(writerID int) {
+			defer wg.Done()
+			for j := 0; j < numOperationsPerGoroutine; j++ {
+				key := fmt.Sprintf("key%d", (j%3)+1)
+				value := fmt.Sprintf("updated_value%d", (j%3)+1)
+				if err := db.Put(key, value); err != nil {
+					errors <- fmt.Errorf("writer %d: failed to put %s: %v", writerID, key, err)
+					return
+				}
+			}
+		}(i)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case err := <-errors:
+		t.Fatalf("Concurrent operation failed: %v", err)
+	case <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("Test timed out")
+	}
+
+	for i := 1; i <= 3; i++ {
+		key := fmt.Sprintf("key%d", i)
+		value, err := db.Get(key)
+		if err != nil {
+			t.Errorf("Failed to get final value for %s: %v", key, err)
+		}
+		expectedInitial := fmt.Sprintf("initial_value%d", i)
+		expectedUpdated := fmt.Sprintf("updated_value%d", i)
+		if value != expectedInitial && value != expectedUpdated {
+			t.Errorf("Unexpected final value for %s: %s", key, value)
+		}
+	}
 }
