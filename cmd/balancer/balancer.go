@@ -11,8 +11,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/maxnetyaga/architecture-practice-4-template/httptools"
-	"github.com/maxnetyaga/architecture-practice-4-template/signal"
+	"github.com/maxnetyaga/architecture-practice-5/httptools"
+	"github.com/maxnetyaga/architecture-practice-5/signal"
 )
 
 var (
