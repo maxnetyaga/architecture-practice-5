@@ -13,6 +13,8 @@ const outFileName = "current-data"
 
 var ErrNotFound = fmt.Errorf("record does not exist")
 
+var simulateMergeError = false
+
 type hashIndex map[string]int64
 
 type Db struct {
@@ -22,7 +24,7 @@ type Db struct {
 	index hashIndex
 }
 
-func Open(dir string) (*Db, error) {
+func Open(dir string, segmentSize int64) (*Db, error) {
 	outputPath := filepath.Join(dir, outFileName)
 	f, err := os.OpenFile(outputPath, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0o600)
 	if err != nil {
@@ -93,6 +95,8 @@ func (db *Db) Get(key string) (string, error) {
 	}
 	return record.value, nil
 }
+
+func (db *Db) MergeSegments() {}
 
 func (db *Db) Put(key, value string) error {
 	e := entry{
