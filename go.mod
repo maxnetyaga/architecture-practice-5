@@ -1,4 +1,4 @@
-module github.com/maxnetyaga/architecture-practice-4-template
+module github.com/maxnetyaga/architecture-practice-5
 
 go 1.24.0
 

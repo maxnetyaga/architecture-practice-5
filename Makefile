@@ -11,5 +11,5 @@ i-test:
 c-run:
 	docker compose up
 
-unit-test:
-	go test -v ./cmd/balancer/...
+test:
+	go test -v ./...
