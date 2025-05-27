@@ -135,7 +135,7 @@ func TestDbSegmentation(t *testing.T) {
 			t.Fatal(err)
 		}
 		if len(files) > 1 {
-			t.Logf("Merge may not have happened yet, or implementation keeps multiple segments")
+			t.Errorf("Merge may not have happened yet, or implementation keeps multiple segments")
 		}
 
 		for i := 0; i < 10; i++ {
