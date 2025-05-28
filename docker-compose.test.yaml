@@ -2,6 +2,7 @@ services:
   test:
     environment:
       - BALANCER_HOST=balancer:8080
+      - TEAM_NAME=lady-and-the-beasts
     build:
       context: .
       dockerfile: Dockerfile.test
