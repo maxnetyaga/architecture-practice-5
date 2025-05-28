@@ -10,30 +10,59 @@ services:
       - servers
     ports:
       - "8090:8080"
+    depends_on:
+      - server1
+      - server2
+      - server3
+      - db
 
   server1:
     build: .
     environment:
       - CONF_RESPONSE_DELAY_SEC=1
+      - CONF_HEALTH_FAILURE=false
+      - TEAM_NAME=lady-and-the-beasts
+      - DB_ADDR=db:8083
     networks:
       - servers
     ports:
       - "8080:8080"
+    depends_on:
+      - db
 
   server2:
     build: .
     environment:
       - CONF_RESPONSE_DELAY_SEC=1
+      - CONF_HEALTH_FAILURE=false
+      - TEAM_NAME=lady-and-the-beasts
+      - DB_ADDR=db:8083
     networks:
       - servers
     ports:
       - "8081:8080"
+    depends_on:
+      - db
 
   server3:
     build: .
     environment:
       - CONF_RESPONSE_DELAY_SEC=1
+      - CONF_HEALTH_FAILURE=false
+      - TEAM_NAME=lady-and-the-beasts
+      - DB_ADDR=db:8083
     networks:
       - servers
     ports:
       - "8082:8080"
+    depends_on:
+      - db
+
+  db:
+    build:
+      context: .
+      dockerfile: cmd/db/Dockerfile
+    networks:
+      - servers
+    ports:
+      - "8083:8083"
