@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"runtime"
 )
 
 const outFileName = "current-data"
@@ -26,6 +27,112 @@ type segmentInfo struct {
 	offset int64
 }
 
+type readRequest struct {
+	key        string
+	segmentFile string
+	offset     int64
+	result     chan readResult
+}
+
+type readResult struct {
+	value string
+	err   error
+}
+
+type readWorkerPool struct {
+	requests   chan readRequest
+	workers    int
+	wg         sync.WaitGroup
+	ctx        chan struct{}
+	dbFilePath string
+}
+
+func newReadWorkerPool(workers int, dbFilePath string) *readWorkerPool {
+	if workers <= 0 {
+		workers = runtime.NumCPU() * 2
+	}
+	
+	pool := &readWorkerPool{
+		requests:   make(chan readRequest, workers*2),
+		workers:    workers,
+		ctx:        make(chan struct{}),
+		dbFilePath: dbFilePath,
+	}
+	
+	for i := 0; i < workers; i++ {
+		pool.wg.Add(1)
+		go pool.worker()
+	}
+	
+	return pool
+}
+
+func (pool *readWorkerPool) worker() {
+	defer pool.wg.Done()
+	
+	for {
+		select {
+		case req := <-pool.requests:
+			value, err := pool.performRead(req)
+			req.result <- readResult{value: value, err: err}
+			
+		case <-pool.ctx:
+			return
+		}
+	}
+}
+
+func (pool *readWorkerPool) performRead(req readRequest) (string, error) {
+	var filePath string
+	if req.segmentFile != "" {
+		filePath = req.segmentFile
+	} else {
+		filePath = pool.dbFilePath
+	}
+	
+	file, err := os.Open(filePath)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+
+	_, err = file.Seek(req.offset, 0)
+	if err != nil {
+		return "", err
+	}
+
+	var record entry
+	if _, err = record.DecodeFromReader(bufio.NewReader(file)); err != nil {
+		return "", err
+	}
+	
+	return record.value, nil
+}
+
+func (pool *readWorkerPool) read(key string, segmentFile string, offset int64) (string, error) {
+	resultChan := make(chan readResult, 1)
+	
+	req := readRequest{
+		key:        key,
+		segmentFile: segmentFile,
+		offset:     offset,
+		result:     resultChan,
+	}
+	
+	select {
+	case pool.requests <- req:
+		result := <-resultChan
+		return result.value, result.err
+	case <-pool.ctx:
+		return "", fmt.Errorf("worker pool is shutting down")
+	}
+}
+
+func (pool *readWorkerPool) close() {
+	close(pool.ctx)
+	pool.wg.Wait()
+}
+
 type Db struct {
 	dir         string
 	out         *os.File
@@ -33,9 +140,10 @@ type Db struct {
 	segmentSize int64
 	segmentNum  int
 	
-	index    hashIndex
-	segments map[string]*segmentInfo
-	mu       sync.RWMutex
+	index      hashIndex
+	segments   map[string]*segmentInfo
+	mu         sync.RWMutex
+	readerPool *readWorkerPool
 }
 
 func Open(dir string, segmentSize int64) (*Db, error) {
@@ -51,6 +159,7 @@ func Open(dir string, segmentSize int64) (*Db, error) {
 		segmentSize: segmentSize,
 		index:       make(hashIndex),
 		segments:    make(map[string]*segmentInfo),
+		readerPool:  newReadWorkerPool(0, outputPath),
 	}
 	
 	err = db.recover()
@@ -152,6 +261,9 @@ func (db *Db) recoverFromSegment(segmentFile string) error {
 }
 
 func (db *Db) Close() error {
+	if db.readerPool != nil {
+		db.readerPool.close()
+	}
 	return db.out.Close()
 }
 
@@ -160,7 +272,7 @@ func (db *Db) Get(key string) (string, error) {
 	defer db.mu.RUnlock()
 	
 	if segInfo, ok := db.segments[key]; ok {
-		return db.getFromSegment(segInfo.file, segInfo.offset)
+		return db.readerPool.read(key, segInfo.file, segInfo.offset)
 	}
 	
 	position, ok := db.index[key]
@@ -168,41 +280,7 @@ func (db *Db) Get(key string) (string, error) {
 		return "", ErrNotFound
 	}
 
-	file, err := os.Open(db.out.Name())
-	if err != nil {
-		return "", err
-	}
-	defer file.Close()
-
-	_, err = file.Seek(position, 0)
-	if err != nil {
-		return "", err
-	}
-
-	var record entry
-	if _, err = record.DecodeFromReader(bufio.NewReader(file)); err != nil {
-		return "", err
-	}
-	return record.value, nil
-}
-
-func (db *Db) getFromSegment(segmentFile string, offset int64) (string, error) {
-	file, err := os.Open(segmentFile)
-	if err != nil {
-		return "", err
-	}
-	defer file.Close()
-
-	_, err = file.Seek(offset, 0)
-	if err != nil {
-		return "", err
-	}
-
-	var record entry
-	if _, err = record.DecodeFromReader(bufio.NewReader(file)); err != nil {
-		return "", err
-	}
-	return record.value, nil
+	return db.readerPool.read(key, "", position)
 }
 
 func (db *Db) Put(key, value string) error {
